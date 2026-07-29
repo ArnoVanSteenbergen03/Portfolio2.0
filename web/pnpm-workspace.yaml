@@ -1,0 +1,5 @@
+allowBuilds:
+  # Next.js image optimizer — needs its native binary built.
+  sharp: true
+  # Native module resolver used by eslint-config-next.
+  unrs-resolver: true

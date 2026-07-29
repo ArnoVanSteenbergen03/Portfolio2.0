@@ -1,0 +1,75 @@
+# Payload CMS stack for the Pi.
+#
+# Merge these two services into the SAME docker-compose.yml your other
+# containers already use — one stack, one network, one backup routine.
+#
+# Changes from the original plan, and why:
+#
+#  1. DATABASE_URL, not DATABASE_URI. src/payload.config.ts now accepts either,
+#     but DATABASE_URL is the name the Payload template actually reads. Getting
+#     this wrong gives an empty connection string and a container that
+#     crash-loops on boot.
+#
+#  2. Host port 3005, not 3001. Port 3001 on the Pi is already Uptime Kuma —
+#     publishing Payload there would fail with "port is already allocated".
+#     Update the cloudflared ingress and Tailscale bookmarks to match.
+#
+#  3. Postgres healthcheck + depends_on condition. Plain `depends_on` only waits
+#     for the container to start, not for Postgres to accept connections, so
+#     Payload would race it and fall over on a cold boot.
+#
+#  4. mem_limit raised to 640m. A Next.js server process idles around 200-300MB
+#     and spikes higher on first request; 384m risks the kernel OOM-killing it
+#     under load, which looks like random 502s through the tunnel.
+
+services:
+  payload-db:
+    image: postgres:16-alpine
+    container_name: payload-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: payload
+      POSTGRES_PASSWORD: ${PAYLOAD_DB_PASSWORD:?set PAYLOAD_DB_PASSWORD in .env}
+      POSTGRES_DB: payload
+    volumes:
+      - ./payload-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U payload -d payload']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 256m
+
+  payload-cms:
+    # Build from source ON the Pi. This path must point at the payload-cms
+    # directory of a clone of the repo — your compose file lives in
+    # ~/docker/compose/, which has no source in it, so an absolute path is
+    # clearest:
+    #   git clone https://github.com/ArnoVanSteenbergen03/Portfolio2.0.git ~/Portfolio2.0
+    build: /home/grand-regent/Portfolio2.0/payload-cms
+    #
+    # Alternative: build on your PC and push. The Pi is arm64 and your PC is
+    # amd64, so a plain `docker build` produces an image that will not run:
+    #   docker buildx build --platform linux/arm64 -t ghcr.io/arnovansteenbergen03/avsworks-cms:latest --push ./payload-cms
+    # Then swap `build:` above for:
+    #   image: ghcr.io/arnovansteenbergen03/avsworks-cms:latest
+    #
+    # Do NOT leave a literal <your-registry> placeholder in here — Compose fails
+    # with "invalid reference format" and refuses to start ANY service in the
+    # file, including payload-db.
+    container_name: payload-cms
+    restart: unless-stopped
+    depends_on:
+      payload-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://payload:${PAYLOAD_DB_PASSWORD}@payload-db:5432/payload
+      PAYLOAD_SECRET: ${PAYLOAD_SECRET:?generate with openssl rand -base64 32}
+      PAYLOAD_PUBLIC_SERVER_URL: https://cms.avsworks.be
+      # Where the public site lives, so afterChange hooks can push updates to it.
+      FRONTEND_URL: ${FRONTEND_URL}
+      REVALIDATE_SECRET: ${REVALIDATE_SECRET:?must match the frontend's value}
+    ports:
+      - '3005:3000'
+    mem_limit: 640m
