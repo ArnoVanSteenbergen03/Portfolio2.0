@@ -9,8 +9,20 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# Install dependencies based on the preferred package manager
-COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* ./
+# Install dependencies based on the preferred package manager.
+#
+# pnpm-workspace.yaml is NOT optional here, despite what the upstream template
+# implies. It carries the `allowBuilds` approvals for sharp, esbuild and
+# unrs-resolver, and pnpm 10+ exits non-zero (ERR_PNPM_IGNORED_BUILDS) when a
+# dependency wants to run a build script it hasn't been allowed to run. Omit
+# this file and `pnpm i` fails outright — and sharp's native binary, which
+# Payload needs for image processing, never gets built.
+COPY package.json pnpm-workspace.yaml* yarn.lock* package-lock.json* pnpm-lock.yaml* ./
+
+# Corepack prompts before downloading a package manager it hasn't pinned, which
+# hangs or fails on a non-interactive CI runner.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+
 RUN \
   if [ -f yarn.lock ]; then yarn --frozen-lockfile; \
   elif [ -f package-lock.json ]; then npm ci; \
