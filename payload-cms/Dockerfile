@@ -42,6 +42,16 @@ COPY . .
 # Uncomment the following line in case you want to disable telemetry during the build.
 # ENV NEXT_TELEMETRY_DISABLED 1
 
+# `next build` imports payload.config.ts, which validates its environment at
+# import time and throws if these are missing. The build never opens a database
+# connection — it only needs the values to exist to get through the import.
+#
+# These placeholders are confined to this build stage. The runtime image below
+# is a separate FROM and does not inherit them; it gets real values from the
+# compose environment. Nothing secret is baked into the published image.
+ENV DATABASE_URL=postgres://build:build@localhost:5432/build
+ENV PAYLOAD_SECRET=build-time-placeholder-overridden-at-runtime
+
 RUN \
   if [ -f yarn.lock ]; then yarn run build; \
   elif [ -f package-lock.json ]; then npm run build; \
