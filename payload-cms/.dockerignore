@@ -1,0 +1,23 @@
+# The Dockerfile installs dependencies in a separate stage and then runs
+# `COPY . .`, so any local node_modules would be copied straight over the
+# properly-installed one — including native binaries built for the wrong
+# architecture. Keep it out of the build context entirely.
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+
+# Nothing here affects the built image, but everything in the context is
+# uploaded to the daemon on every build.
+tests
+playwright.config.ts
+vitest.config.mts
+vitest.setup.ts
+.vscode
+.claude
+README.md
+CLAUDE.md
+Dockerfile
+docker-compose.yml

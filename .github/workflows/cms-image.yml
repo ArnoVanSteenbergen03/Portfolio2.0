@@ -1,0 +1,67 @@
+name: Build CMS image
+
+# Builds the Payload CMS container and publishes it to GHCR.
+#
+# The Pi has 3.7GB RAM with ~2GB free, which is not enough to build Next.js and
+# the Payload admin bundle — the build gets OOM-killed. So it happens here
+# instead, and the Pi only ever pulls a finished image.
+
+on:
+  push:
+    branches: [main]
+    # Only rebuild when the CMS actually changes. Edits to web/ or docs don't
+    # need a new image.
+    paths:
+      - 'payload-cms/**'
+      - '.github/workflows/cms-image.yml'
+  # Lets you trigger a rebuild by hand from the Actions tab.
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/avsworks-cms
+
+jobs:
+  build:
+    # Native arm64 runner — free for public repos. Matters a lot here: the Pi is
+    # arm64, and cross-building on an amd64 runner means QEMU emulation, which
+    # turns a ~4 minute build into ~25.
+    runs-on: ubuntu-24.04-arm
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Automatically provided — no PAT to create or rotate.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./payload-cms
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Layer cache between runs, so unchanged dependencies aren't
+          # reinstalled on every push.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

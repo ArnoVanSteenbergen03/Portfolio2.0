@@ -100,25 +100,68 @@ is untracked locally and `origin` only has the initial commit. Commit and push
 from your PC before cloning. `.env` files are gitignored, so no secrets travel;
 you create those on the Pi in step 2.
 
-Building Next.js on a Pi is the heaviest moment in this whole setup.
+**Nothing is built on the Pi, and nothing is built by hand.** `free -h` reports
+3.7GB total with ~2.0GB available after the other seven containers — not enough
+for a Next.js + Payload admin build, which gets OOM-killed partway through.
 
-**The heap ceiling is already fixed in the repo** — `package.json` now sets
-`--max-old-space-size=4096` instead of 8000, so Node can't balloon past physical
-RAM and get OOM-killed mid-build.
+GitHub Actions does it instead. The loop is:
 
-(Correction to what I said earlier: a `--build-arg NODE_OPTIONS=...` would *not*
-have worked. The build script uses `cross-env NODE_OPTIONS="..."`, which sets
-the variable explicitly and overrides anything from the environment. It had to
-change in `package.json`.)
-
-Check swap before building — 2GB helps a lot:
-
-```bash
-free -h
+```
+push to main  ->  Actions builds arm64 image  ->  pushes to GHCR
+                                                      |
+                        watchtower (on the Pi) notices within 5 min
+                                                      |
+                                     restarts payload-cms on the new image
 ```
 
-If the Pi has 4GB or less, don't build on it. Use the buildx route in the
-compose file's comments instead.
+`.github/workflows/cms-image.yml` handles the build. It runs on
+`ubuntu-24.04-arm` — a native arm64 runner, free for public repos — so there's
+no QEMU emulation and builds take minutes rather than half an hour. It only
+triggers on changes under `payload-cms/`, so editing the frontend or these docs
+doesn't rebuild the image.
+
+### One-time setup
+
+**1. Make the GHCR package public.** Packages published from a public repo still
+default to *private*, and watchtower on the Pi pulls anonymously — so the first
+pull fails with `denied` until you fix this. After the first successful workflow
+run:
+
+> github.com/ArnoVanSteenbergen03?tab=packages → `avsworks-cms` → Package
+> settings → Change visibility → Public
+
+(Alternative if you'd rather keep it private: create a PAT with `read:packages`
+and run `docker login ghcr.io` on the Pi. Public is simpler, and the source is
+public anyway.)
+
+**2. Verify the Pi can pull it:**
+
+```bash
+docker pull ghcr.io/arnovansteenbergen03/avsworks-cms:latest
+```
+
+**3. Bring the stack up:**
+
+```bash
+cd ~/docker/compose && docker compose up -d payload-db payload-cms watchtower
+```
+
+### After that
+
+Every push to `main` that touches `payload-cms/` redeploys itself. To force it
+immediately rather than waiting for watchtower's 5-minute poll:
+
+```bash
+cd ~/docker/compose && docker compose pull payload-cms && docker compose up -d payload-cms
+```
+
+> The clone on the Pi stays — it holds the compose file and these docs — but
+> nothing is built from it.
+
+(Correction to earlier advice: a `--build-arg NODE_OPTIONS=...` would *not* have
+worked. The build script uses `cross-env NODE_OPTIONS="..."`, which sets the
+variable explicitly and overrides the environment. It had to change in
+`package.json`, where it's now 4096 instead of 8000.)
 
 **Alternative — build on your PC and push.** Faster, but the Pi is arm64 and
 your PC is amd64, so a plain `docker build` produces an image that will not run:
