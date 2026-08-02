@@ -60,6 +60,21 @@ export default buildConfig({
     outputFile: path.resolve(dirname, 'payload-types.ts'),
   },
   db: postgresAdapter({
+    /*
+     * Payload's Postgres adapter only pushes schema automatically outside
+     * production, and expects migrations otherwise. This project has none, and
+     * the standalone Docker output doesn't ship the Payload CLI, so there's no
+     * practical way to run `payload migrate` inside the container — without
+     * this the tables are never created and creating the first admin user
+     * fails.
+     *
+     * Tradeoff: Payload alters the live tables directly on a schema change,
+     * which can drop a column and its data if you remove a field. Acceptable
+     * for a personal CMS with a small dataset and regular pg_dumps. If the
+     * content ever becomes hard to recreate, generate real migrations with
+     * `pnpm payload migrate:create` and set this back to false.
+     */
+    push: true,
     pool: {
       connectionString: databaseURL,
     },
